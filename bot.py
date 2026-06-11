@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import threading
 import requests
@@ -18,10 +19,14 @@ HEADERS = {
 }
 
 
+def log(msg):
+    print(msg, flush=True)
+    sys.stdout.flush()
+
+
 def get_latest_run():
     url = f"https://api.github.com/repos/{REPO}/actions/workflows/{WORKFLOW_FILE}/runs"
-    params = {"per_page": 1}
-    r = requests.get(url, headers=HEADERS, params=params)
+    r = requests.get(url, headers=HEADERS, params={"per_page": 1})
     r.raise_for_status()
     runs = r.json().get("workflow_runs", [])
     return runs[0] if runs else None
@@ -43,7 +48,7 @@ def trigger_workflow():
 
 
 def watcher():
-    print("[bot] Watcher started")
+    log("[bot] Watcher started")
     while True:
         try:
             run = get_latest_run()
@@ -51,23 +56,25 @@ def watcher():
                 status = run.get("status")
                 conclusion = run.get("conclusion")
                 run_id = run.get("id")
-                print(f"[bot] Run #{run_id} — status={status} conclusion={conclusion}")
+                log(f"[bot] Run #{run_id} — status={status} conclusion={conclusion}")
 
                 if status == "completed" and conclusion == "cancelled":
-                    print(f"[bot] Cancelled run detected. Triggering resume...")
+                    log("[bot] Cancelled run detected. Triggering resume...")
                     ok = trigger_workflow()
-                    if ok:
-                        print("[bot] Resume triggered successfully")
-                    else:
-                        print("[bot] Failed to trigger resume")
+                    log("[bot] Resume triggered successfully" if ok else "[bot] Failed to trigger resume")
                 else:
-                    print("[bot] No action needed")
+                    log("[bot] No action needed")
             else:
-                print("[bot] No runs found")
+                log("[bot] No runs found")
         except Exception as e:
-            print(f"[bot] Error: {e}")
+            log(f"[bot] Error: {e}")
 
         time.sleep(POLL_INTERVAL)
+
+
+# Start watcher thread at module load — works with gunicorn
+t = threading.Thread(target=watcher, daemon=True)
+t.start()
 
 
 @app.route("/")
@@ -76,7 +83,5 @@ def index():
 
 
 if __name__ == "__main__":
-    t = threading.Thread(target=watcher, daemon=True)
-    t.start()
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
